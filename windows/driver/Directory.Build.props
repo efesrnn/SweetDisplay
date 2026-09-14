@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <SweetDisplayOutputRoot>$(MSBuildThisFileDirectory)..\..\out\windows\$(Platform)\$(Configuration)\</SweetDisplayOutputRoot>
+    <OutDir>$(SweetDisplayOutputRoot)$(MSBuildProjectName)\bin\</OutDir>
+    <IntDir>$(SweetDisplayOutputRoot)$(MSBuildProjectName)\obj\</IntDir>
+    <SignMode>Off</SignMode>
+  </PropertyGroup>
+</Project>

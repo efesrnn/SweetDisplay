@@ -1,0 +1,33 @@
+SweetDisplay public engineering scope
+
+Reuse the Redmi Note 10 Pro SoC, RAM, storage, motherboard, AMOLED, touchscreen,
+camera and original charging/thermal systems as a dedicated Windows USB companion.
+The original operator conversation remains local and is not part of the public repository.
+
+V1 goals (not achieved): a 2400x1080 AMOLED extended display at 60 Hz, native absolute
+touch digitizer and 720p30 UVC camera, with approximately 50-80 ms interaction latency.
+Display and touch precede camera. No mirroring application, manual Android app launch,
+replacement display controller or assumed HDMI/DisplayPort input.
+
+Windows: build the pinned Microsoft IndirectDisplay sample unchanged first; then
+derive a licensed UMDF/IddCx driver for one SweetDisplay AMOLED virtual monitor.
+Preferred mode 2400x1080@60; fallback modes 1280x576@30/60 and 1920x864@30.
+Verify the Settings label, extended topology and actual active mode independently.
+Driver-to-host frame capture must be demonstrated before claiming transport success.
+Use a bounded queue; host owns encoding, pacing, connection state and USB transport.
+
+Device: establish exact variant, running build/kernel, partitions, display/input nodes,
+USB controller and decoder interfaces before selecting code or firmware. Source pins
+are candidates, not proof of compatibility. Official unlock is manual; no wait bypass.
+Recovery identity and matching stock images are prerequisites for device experiments.
+No automatic flashing, partition changes or Windows security changes.
+
+Minimal userspace should start device services automatically. Bring up local test
+patterns and touch first, then raw 800x360@10 video, followed by compression and scale.
+Investigate Qualcomm decode from real runtime evidence; do not assume upstream APIs
+match the Xiaomi downstream kernel. Camera follows stable display/touch.
+Batteryless operation and 120 Hz are outside V1.
+
+See ARCHITECTURE, DISPLAY_PIPELINE, USB_PROTOCOL, BUILD_DEVICE, RECOVERY, TOUCH and
+CAMERA for the detailed design. Maintain verified/assumed/blocked/not-tested states.
+Private device identifiers, account state, machine inventory and raw logs stay local.

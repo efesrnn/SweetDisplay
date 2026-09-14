@@ -1,0 +1,22 @@
+{
+  "recorded_date": "2026-09-13",
+  "sources": [
+    {
+      "name": "Windows-driver-samples",
+      "url": "https://github.com/microsoft/Windows-driver-samples.git",
+      "branch": "main",
+      "commit": "67d81f217bc01edf7a4320e4911c11065635acfa",
+      "sparse_paths": ["video/IndirectDisplay"],
+      "local_path": "third_party/upstream/Windows-driver-samples",
+      "status": "local ignored checkout; unchanged baseline build passed with EWDK 26100.6584"
+    },
+    {
+      "name": "Xiaomi_Kernel_OpenSource",
+      "url": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git",
+      "branch": "sweet-r-oss",
+      "commit": "758bb7ef50af360e728662a1ed3b3a1b977a2f13",
+      "status": "remote ref verified; Makefile inspected locally; no source redistributed; installed-build match unknown"
+    }
+  ]
+}
+

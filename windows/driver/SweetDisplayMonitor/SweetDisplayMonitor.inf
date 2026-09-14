@@ -1,0 +1,39 @@
+; Companion name mapping for the private SWT0001 virtual monitor identity.
+; No physical monitor EDID, firmware, color profile or device serial is installed.
+[Version]
+Signature="$WINDOWS NT$"
+Class=Monitor
+ClassGuid={4D36E96E-E325-11CE-BFC1-08002BE10318}
+Provider=%Provider%
+DriverVer=09/13/2026,0.1.0.0
+CatalogFile=SweetDisplayMonitor.cat
+PnpLockdown=1
+
+[Manufacturer]
+%Provider%=Models,NTamd64.10.0...22000
+
+[Models.NTamd64.10.0...22000]
+%MonitorName%=Install,MONITOR\SWT0001
+
+[Install.NT]
+Include=monitor.inf
+Needs=PnPMonitor.Install
+AddReg=MonitorSettings
+
+[Install.NT.Services]
+Include=monitor.inf
+Needs=PnPMonitor.Install.Services
+
+[Install.NT.HW]
+AddReg=MonitorName
+
+[MonitorName]
+HKR,,FriendlyName,0,%MonitorName%
+
+[MonitorSettings]
+HKR,,PreferredMode,0,"2400,1080,60"
+HKR,,MaxResolution,0,"2400,1080"
+
+[Strings]
+Provider="SweetDisplay Project"
+MonitorName="SweetDisplay AMOLED"
