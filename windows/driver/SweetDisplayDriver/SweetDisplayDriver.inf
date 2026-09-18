@@ -38,6 +38,7 @@ Needs=WUDFRD.NT.HW
 AddReg = MyDevice_HardwareDeviceSettings
 
 [MyDevice_HardwareDeviceSettings]
+HKR,,Security,,"D:P(A;;GA;;;BA)(A;;GA;;;SY)(A;;GA;;;UD)"
 HKR,, "UpperFilters",  %REG_MULTI_SZ%, "IndirectKmd"
 HKR, "WUDF", "DeviceGroupId", %REG_SZ%, "SweetDisplayDriverGroup"
 

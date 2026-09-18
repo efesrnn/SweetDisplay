@@ -17,6 +17,8 @@ Environment:
 
 #include "Driver.h"
 #include "MonitorConfig.h"
+#include "FrameDiagnostics.h"
+#include "FrameHandoff.h"
 #include "Driver.tmh"
 
 using namespace std;
@@ -75,6 +77,8 @@ extern "C" DRIVER_INITIALIZE DriverEntry;
 
 EVT_WDF_DRIVER_DEVICE_ADD IddSampleDeviceAdd;
 EVT_WDF_DEVICE_D0_ENTRY IddSampleDeviceD0Entry;
+EVT_IDD_CX_DEVICE_IO_CONTROL SweetDisplayIoControl;
+EVT_WDF_FILE_CLEANUP SweetDisplayFileCleanup;
 
 EVT_IDD_CX_ADAPTER_INIT_FINISHED IddSampleAdapterInitFinished;
 EVT_IDD_CX_ADAPTER_COMMIT_MODES IddSampleAdapterCommitModes;
@@ -167,8 +171,8 @@ NTSTATUS IddSampleDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
     IDD_CX_CLIENT_CONFIG_INIT(&IddConfig);
 
     // If the driver wishes to handle custom IoDeviceControl requests, it's necessary to use this callback since IddCx
-    // redirects IoDeviceControl requests to an internal queue. This sample does not need this.
-    // IddConfig.EvtIddCxDeviceIoControl = IddSampleIoDeviceControl;
+    // redirects IoDeviceControl requests to an internal queue.
+    IddConfig.EvtIddCxDeviceIoControl = SweetDisplayIoControl;
 
     IddConfig.EvtIddCxAdapterInitFinished = IddSampleAdapterInitFinished;
 
@@ -184,6 +188,10 @@ NTSTATUS IddSampleDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
     {
         return Status;
     }
+
+    WDF_FILEOBJECT_CONFIG fileConfig;
+    WDF_FILEOBJECT_CONFIG_INIT(&fileConfig, WDF_NO_EVENT_CALLBACK, WDF_NO_EVENT_CALLBACK, SweetDisplayFileCleanup);
+    WdfDeviceInitSetFileObjectConfig(pDeviceInit, &fileConfig, WDF_NO_OBJECT_ATTRIBUTES);
 
     WDF_OBJECT_ATTRIBUTES Attr;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&Attr, IndirectDeviceContextWrapper);
@@ -205,12 +213,34 @@ NTSTATUS IddSampleDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
     }
 
     Status = IddCxDeviceInitialize(Device);
+    if (!NT_SUCCESS(Status)) return Status;
 
     // Create a new device context object and attach it to the WDF device object
     auto* pContext = WdfObjectGet_IndirectDeviceContextWrapper(Device);
     pContext->pContext = new IndirectDeviceContext(Device);
+    return WdfDeviceCreateDeviceInterface(Device, &SweetDisplay::Handoff::InterfaceId, nullptr);
+}
 
-    return Status;
+_Use_decl_annotations_
+VOID SweetDisplayFileCleanup(WDFFILEOBJECT FileObject)
+{
+    auto* wrapper = WdfObjectGet_IndirectDeviceContextWrapper(WdfFileObjectGetDevice(FileObject));
+    if (wrapper->pContext) wrapper->pContext->Handoff->Disconnect(FileObject);
+}
+
+_Use_decl_annotations_
+VOID SweetDisplayIoControl(WDFDEVICE Device, WDFREQUEST Request, size_t OutputBufferLength, size_t InputBufferLength, ULONG IoControlCode)
+{
+    void* input = nullptr; void* output = nullptr; size_t written = 0;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (InputBufferLength) status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength, &input, nullptr);
+    if (NT_SUCCESS(status) && OutputBufferLength) status = WdfRequestRetrieveOutputBuffer(Request, OutputBufferLength, &output, nullptr);
+    auto* wrapper = WdfObjectGet_IndirectDeviceContextWrapper(Device);
+    if (NT_SUCCESS(status) && wrapper->pContext) {
+        try { status = wrapper->pContext->Handoff->Control(WdfRequestGetFileObject(Request), IoControlCode, input, InputBufferLength, output, OutputBufferLength, written); }
+        catch (...) { status = STATUS_INSUFFICIENT_RESOURCES; }
+    } else if (NT_SUCCESS(status)) status = STATUS_DEVICE_NOT_READY;
+    WdfRequestCompleteWithInformation(Request, status, written);
 }
 
 _Use_decl_annotations_
@@ -271,8 +301,8 @@ HRESULT Direct3DDevice::Init()
 
 #pragma region SwapChainProcessor
 
-SwapChainProcessor::SwapChainProcessor(IDDCX_SWAPCHAIN hSwapChain, shared_ptr<Direct3DDevice> Device, HANDLE NewFrameEvent)
-    : m_hSwapChain(hSwapChain), m_Device(Device), m_hAvailableBufferEvent(NewFrameEvent)
+SwapChainProcessor::SwapChainProcessor(IDDCX_SWAPCHAIN hSwapChain, shared_ptr<Direct3DDevice> Device, HANDLE NewFrameEvent, shared_ptr<SweetDisplay::FrameHandoff> Handoff)
+    : m_hSwapChain(hSwapChain), m_Device(Device), m_Handoff(std::move(Handoff)), m_hAvailableBufferEvent(NewFrameEvent)
 {
     m_hTerminateEvent.Attach(CreateEvent(nullptr, FALSE, FALSE, nullptr));
 
@@ -306,6 +336,7 @@ void SwapChainProcessor::Run()
     HANDLE AvTaskHandle = AvSetMmThreadCharacteristicsW(L"Distribution", &AvTask);
 
     RunCore();
+    m_Handoff->Stop();
 
     // Always delete the swap-chain object when swap-chain processing loop terminates in order to kick the system to
     // provide a new swap-chain if necessary.
@@ -334,9 +365,13 @@ void SwapChainProcessor::RunCore()
         return;
     }
 
+    SweetDisplay::FrameDiagnostics diagnostics;
+    m_Handoff->Start(m_Device);
+
     // Acquire and release buffers in a loop
     for (;;)
     {
+        if (WaitForSingleObject(m_hTerminateEvent.Get(), 0) == WAIT_OBJECT_0) break;
         ComPtr<IDXGIResource> AcquiredBuffer;
 
         // Ask for the next buffer from the producer
@@ -374,6 +409,8 @@ void SwapChainProcessor::RunCore()
         {
             // We have new frame to process, the surface has a reference on it that the driver has to release
             AcquiredBuffer.Attach(Buffer.MetaData.pSurface);
+            diagnostics.Observe(AcquiredBuffer.Get(), Buffer.MetaData, *m_Device);
+            m_Handoff->Observe(AcquiredBuffer.Get(), Buffer.MetaData);
 
             // ==============================
             // TODO: Process the frame here
@@ -426,6 +463,7 @@ IndirectDeviceContext::IndirectDeviceContext(_In_ WDFDEVICE WdfDevice) :
     m_WdfDevice(WdfDevice)
 {
     m_Adapter = {};
+    Handoff = std::make_shared<SweetDisplay::FrameHandoff>();
 }
 
 IndirectDeviceContext::~IndirectDeviceContext()
@@ -524,7 +562,7 @@ void IndirectDeviceContext::FinishInit(UINT ConnectorIndex)
     {
         // Create a new monitor context object and attach it to the Idd monitor object
         auto* pMonitorContextWrapper = WdfObjectGet_IndirectMonitorContextWrapper(MonitorCreateOut.MonitorObject);
-        pMonitorContextWrapper->pContext = new IndirectMonitorContext(MonitorCreateOut.MonitorObject);
+        pMonitorContextWrapper->pContext = new IndirectMonitorContext(MonitorCreateOut.MonitorObject, Handoff);
 
         // Tell the OS that the monitor has been plugged in
         IDARG_OUT_MONITORARRIVAL ArrivalOut;
@@ -532,8 +570,8 @@ void IndirectDeviceContext::FinishInit(UINT ConnectorIndex)
     }
 }
 
-IndirectMonitorContext::IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor) :
-    m_Monitor(Monitor)
+IndirectMonitorContext::IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor, shared_ptr<SweetDisplay::FrameHandoff> Handoff) :
+    m_Monitor(Monitor), m_Handoff(std::move(Handoff))
 {
 }
 
@@ -556,7 +594,7 @@ void IndirectMonitorContext::AssignSwapChain(IDDCX_SWAPCHAIN SwapChain, LUID Ren
     else
     {
         // Create a new swap-chain processing thread
-        m_ProcessingThread.reset(new SwapChainProcessor(SwapChain, Device, NewFrameEvent));
+        m_ProcessingThread.reset(new SwapChainProcessor(SwapChain, Device, NewFrameEvent, m_Handoff));
     }
 }
 

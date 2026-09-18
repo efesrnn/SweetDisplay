@@ -13,6 +13,10 @@ SweetDisplay derives the driver, device enumerator and project scaffolding from
 this sample. Changes include virtual monitor identity, modes, buffer validation,
 enumerator lifetime/error handling and local build-output paths. Upstream notices
 remain in the copied material. The full upstream checkout is not redistributed.
+The .vcxproj scaffolding for the frame probe, Host and Host tests also derives
+from that sample. Its MS-PL attribution applies outside windows/driver as described
+in LICENSE.md. New frame handoff code includes a bounded GPU pool and metadata
+interface; independently authored Host code has no additional license grant yet.
 
 ## Xiaomi kernel candidate
 

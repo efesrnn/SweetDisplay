@@ -1,34 +1,71 @@
-# Display pipeline decision — proposed, NOT YET TESTED
+# Display pipeline — implemented handoff and remaining gates
 
-## First driver-to-host interface
+## VERIFIED PHASE 2 path
 
-Choose a private WDF device interface with overlapped buffered IOCTL requests for the first low-rate CPU frame proof. UMDF supports application device-interface I/O and framework-managed request buffers. This is a documented mechanism; compatibility with our actual IddCx derivative remains to be demonstrated. [Device interfaces](https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/using-device-interfaces), [UMDF buffers](https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/accessing-data-buffers-in-wdf-drivers).
+Actual Windows desktop on SWT0001 / SweetDisplay AMOLED -> IddCx UMDF 2 ->
+one GPU CopyResource -> three shared D3D11 textures -> SweetDisplayHost.
+The documented IddCx device-interface IOCTL path carries validated metadata and
+control only. It never transports full pixel buffers. The earlier CPU-readback
+proposal was superseded by this implementation; it is not the current design.
 
-Planned operations: GET_CAPS, GET_STATS, WAIT_FRAME(last seen generation/frame ID). Define a separate versioned local ABI with fixed-width fields, no pointers. Host opens the registered interface using SetupAPI/Configuration Manager and CreateFile, with restrictive access policy allowing the intended host principal. Driver validates every size/version, zeroes output padding and completes/cancels each request exactly once. Use a cancel-safe manual WDF queue, bounded outstanding requests, and remove/power-down cleanup. Resolve actual device ACL/host identity before deployment; do not expose desktop pixels to every local user.
+The Host creates same-render-adapter BGRA8 resources with shared NT handles and
+keyed mutexes. The driver opens the restricted named resources. Producer work
+does not wait for the Host: the bounded queue replaces old ready frames, never a
+held frame. The Host fetches the newest ready frame, acquires it, releases it and
+acknowledges its exact epoch/ID/slot. File cleanup retires the connection.
+See [FRAME_HANDOFF.md](FRAME_HANDOFF.md) for the ABI and measured crash/reconnect
+and slow-consumer results. This is one GPU copy, not a zero-copy claim.
 
-Copy acquired D3D texture into driver-owned resources before source reuse. For initial proof, downscale to 800x360 and read back BGRA8 at up to 10 fps into a two-slot CPU queue. Honor D3D row pitch, GPU completion and format; never pass a COM surface pointer across processes. Do not block the IddCx acquisition loop on encoding, USB, host I/O or disk. Device loss/swapchain replacement retires resources and increments generation; host disconnect cannot hold the desktop pipeline hostage.
+An optional diagnostic path samples only two 640-pixel rows to match a nonce and
+counter rendered on the actual indirect desktop. It is not full-frame readback,
+but synchronous Map can perturb timing and must be measured separately. The
+single PHASE 1 BMP stays in private evidence. Earlier PHASE 3A.1 failure controls
+saved bounded private crops; successful classified pilots/observation/soak saved
+no images. No continuous or normal full-frame CPU readback was added.
 
-The pinned sample's `SwapChainProcessor::RunCore` uses the selected render adapter, ReleaseAndAcquireBuffer, buffer-available/termination events and FinishedProcessingFrame. Its TODO site is the future extraction point. Preserve those lifetime rules; do not assume FinishedProcessingFrame alone makes an asynchronous readback complete. [Pinned sample](https://github.com/microsoft/Windows-driver-samples/blob/67d81f217bc01edf7a4320e4911c11065635acfa/video/IndirectDisplay/IddSampleDriver/Driver.cpp).
+## PHASE 3A capacity and soak
 
-## Alternatives
+60 Hz mode is VERIFIED; sustained 60 FPS handoff is not yet established. Prior
+PHASE 2 workload paint cadence was about 39.84/s. A new D3D11 test window renders
+distinct counters and moving geometry on the active SWT0001 desktop, using DXGI
+latency signaling and optional QPC/high-resolution timer pacing. Measurements
+separate source acquisition, metadata reception, mutex acquisition and diagnostic
+sample completion. No isolated GPU-copy timestamp is presently available.
 
-| Mechanism | Decision |
-|---|---|
-| Buffered WDF IOCTL | First proof: simple explicit ownership/cancellation, with CPU-copy cost |
-| Shared CPU ring | Revisit if profiling warrants; requires ACL, cross-session handle transfer and synchronization design |
-| Shared D3D11 textures | Later optimization; needs same-adapter/format support, NT handle transfer, ACLs, synchronization and reset handling |
+The initial 60-second experiments demonstrate workload-sensitive rates above the
+old 38.5 FPS result. The 30-minute-10-second run observed 54.325356 FPS, but failed
+content acceptance (174 nonce mismatches and one counter regression). It does
+not pass the capacity/soak gate. See
+[PHASE3_VALIDATION.md](PHASE3_VALIDATION.md) and TEST_LOG for exact attempts.
+The installed driver and three-slot architecture remain unchanged. The later
+fresh corrected soak passed at 55.662408 Host FPS for 1810.0007551 seconds,
+including resource review and fresh-process reconnect. PHASE 3A is VERIFIED;
+see [PHASE3A_RESULTS.md](PHASE3A_RESULTS.md). The old soak remains UNKNOWN.
 
-No zero-copy or shared-GPU-texture support is claimed. At 2400x1080 BGRA8/60 the frame bytes alone are 622,080,000 bytes/s; the initial IOCTL/readback approach is not the final performance promise.
+## PHASE 3B planned GPU-native encoding — NOT YET TESTED
 
-## Proof criteria
+Shared D3D11 BGRA8 -> GPU format conversion/scaling as required -> Media
+Foundation hardware H.264 MFT with DXGI device manager -> encoded access units.
+No full-frame GPU-to-CPU download is permitted in the normal video path.
 
-Move a distinguishable window on the actual indirect monitor. Host logs frame ID, generation, monotonic QPC timestamp/frequency, source and output dimensions, format, stride, queue depth and drops. Optionally dump one requested frame, not every frame. A synthetic probe is never counted as desktop capture. Measure interarrival median/p95/p99 and CPU/GPU utilization, recording GPU, mode and workload. A static desktop need not produce frames at refresh cadence.
+Enumerate usable MFTs and record friendly name, CLSID, hardware status, adapter,
+input/output types, resolution/rate, bitrate, profile, low-latency and GOP/IDR
+settings and every rejected configuration. Hardware registration is not proof
+of successful activation or actual encoding. Respect asynchronous MFT events.
+[MFT enumeration](https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mftenumex),
+[Microsoft H.264 encoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-encoder).
 
-## Encoder experiments
+Progressively test 800x360@10, 1280x576@30, 1920x864@30, 2400x1080@30 and
+2400x1080@60. Measure real submit/output counts, drop accounting, latency
+percentiles, encoded bytes/bitrate, IDR behavior and resources. Bounded input
+queues and backpressure must preserve desktop responsiveness. Decode the output
+and verify correspondence to Display 3 before declaring success.
 
-Enumerate H.264 hardware encoder MFTs; record friendly names/CLSID and HRESULTs before selecting one. Hardware registration is not proof of activation or throughput. Probe actual NV12/D3D11 acceptance, accepted type ranges, D3D-aware attributes and asynchronous MFT event handling. Use hardware MFT documentation rather than assuming Microsoft's software H.264 encoder properties apply identically to every vendor. [MFTEnumEx](https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mftenumex), [H.264 encoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-encoder).
+## PHASE 3C–3E planned end-to-end path — NOT YET TESTED
 
-Request low latency through supported CODECAPI/MF properties, check each result, minimize B-frames where supported, and record output SPS/PPS, keyframe cadence, bitrate and actual timestamp behavior. Progress: synthetic 800x360@10 → real frames → 1280x576@30 → 2400x1080@30 → 60. Measure submit-to-output latency and queue depth before optimization. No real encode experiment or end-to-end latency result exists yet.
-
-Discovery result 2026-09-13: hardware H.264 MFT registrations were returned successfully. Registration discovery does not prove activation or real encoding; raw hardware details remain in private evidence.
-
+The later localhost transport and PC device simulator will carry actual encoded
+Display 3 frames over the same logical protocol intended for future displayd.
+The simulator must decode/render changing desktop content, recover from restart
+and stalled consumers, then return mouse-derived absolute touch via that protocol.
+Protocol, simulator and touch implementation are gated on earlier measured results.
+Phone-specific decode/display/input behavior remains UNVERIFIED.

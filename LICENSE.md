@@ -4,6 +4,9 @@ No single project-wide open-source license has been selected for SweetDisplay.
 
 The Microsoft sample-derived driver, enumerator, project scaffolding and modifications
 under windows/driver are distributed under the Microsoft Public License (MS-PL).
+The sample-derived .vcxproj scaffolding under windows/tools and windows/host
+is also covered by MS-PL. This does not extend that grant to independently
+authored Host or shared-protocol source files.
 The full license and upstream copyright notice are preserved in
 [LICENSE-MS-PL.txt](windows/driver/LICENSE-MS-PL.txt). See [NOTICE.md](NOTICE.md).
 

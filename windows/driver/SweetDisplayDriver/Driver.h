@@ -17,6 +17,8 @@
 
 #include "Trace.h"
 
+namespace SweetDisplay { class FrameHandoff; }
+
 namespace Microsoft
 {
     namespace WRL
@@ -55,7 +57,7 @@ namespace Microsoft
         class SwapChainProcessor
         {
         public:
-            SwapChainProcessor(IDDCX_SWAPCHAIN hSwapChain, std::shared_ptr<Direct3DDevice> Device, HANDLE NewFrameEvent);
+            SwapChainProcessor(IDDCX_SWAPCHAIN hSwapChain, std::shared_ptr<Direct3DDevice> Device, HANDLE NewFrameEvent, std::shared_ptr<SweetDisplay::FrameHandoff> Handoff);
             ~SwapChainProcessor();
 
         private:
@@ -66,6 +68,7 @@ namespace Microsoft
 
             IDDCX_SWAPCHAIN m_hSwapChain;
             std::shared_ptr<Direct3DDevice> m_Device;
+            std::shared_ptr<SweetDisplay::FrameHandoff> m_Handoff;
             HANDLE m_hAvailableBufferEvent;
             Microsoft::WRL::Wrappers::Thread m_hThread;
             Microsoft::WRL::Wrappers::Event m_hTerminateEvent;
@@ -82,6 +85,7 @@ namespace Microsoft
 
             void InitAdapter();
             void FinishInit(UINT ConnectorIndex);
+            std::shared_ptr<SweetDisplay::FrameHandoff> Handoff;
 
         protected:
             WDFDEVICE m_WdfDevice;
@@ -91,7 +95,7 @@ namespace Microsoft
         class IndirectMonitorContext
         {
         public:
-            IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor);
+            IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor, std::shared_ptr<SweetDisplay::FrameHandoff> Handoff);
             virtual ~IndirectMonitorContext();
 
             void AssignSwapChain(IDDCX_SWAPCHAIN SwapChain, LUID RenderAdapter, HANDLE NewFrameEvent);
@@ -99,6 +103,7 @@ namespace Microsoft
 
         private:
             IDDCX_MONITOR m_Monitor;
+            std::shared_ptr<SweetDisplay::FrameHandoff> m_Handoff;
             std::unique_ptr<SwapChainProcessor> m_ProcessingThread;
         } ;
     }
