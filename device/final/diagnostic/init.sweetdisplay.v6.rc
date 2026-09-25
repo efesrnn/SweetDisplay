@@ -1,0 +1,58 @@
+# FINAL-BOOT BRINGUP V6 host-side source. Not installed on stock.
+# V5 proved enforcing SELinux and full diagnostic execution, but the diagnostic
+# ran before ueventd had published completion of its coldboot replay. V6 starts
+# DRM probing only from the stock ro.cold_boot_done=true signal. Both normal
+# completion and failure return control to init, which owns the transient reboot
+# request; the recovery-domain binary no longer needs sys_boot permission.
+
+on early-init
+    write /sys/fs/selinux/enforce 1
+    exec_start sweetdisplay-enforce-probe-v6
+
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+    start sweetdisplay-coldboot-watchdog-v6
+
+on init
+    export ANDROID_ROOT /system
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+on property:ro.cold_boot_done=true
+    start sweetdisplay-diag-v6
+
+on property:init.svc.sweetdisplay-diag-v6=stopped
+    setprop sys.powerctl reboot
+
+on property:init.svc.sweetdisplay-coldboot-watchdog-v6=stopped
+    setprop sys.powerctl reboot
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+service sweetdisplay-enforce-probe-v6 /system/bin/recovery --early-probe
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-coldboot-watchdog-v6 /system/bin/recovery --coldboot-watchdog
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-diag-v6 /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

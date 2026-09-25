@@ -1,0 +1,47 @@
+# FINAL-BOOT BRINGUP V5 host-side source. Not installed on stock.
+# V4 proved second-stage init but exposed two early-root omissions: Android 11
+# SetupCgroups could not read /etc/cgroups.json, and vendor_init was denied
+# access to the missing stock /bin symlink.  The V5 ramdisk supplies only those
+# exact dependencies plus /acct; it still exposes no recovery.fstab and mounts
+# no persistent partition.
+
+on early-init
+    # The exact stock recovery policy has an empty permissive-domain bitmap,
+    # but V4's runtime remained globally permissive.  Strengthen the temporary
+    # environment before any service starts, then synchronously prove the
+    # state through the revision-tagged static diagnostic.
+    write /sys/fs/selinux/enforce 1
+    exec_start sweetdisplay-enforce-probe-v5
+
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+
+on init
+    export ANDROID_ROOT /system
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+on late-init
+    start sweetdisplay-diag-v5
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+service sweetdisplay-enforce-probe-v5 /system/bin/recovery --early-probe
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-diag-v5 /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

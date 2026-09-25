@@ -7,6 +7,7 @@
 /.local/
 /.codex/
 /.agents/
+/System.Management.Automation.Internal.Host.InternalHost/
 /docs/evidence/*
 !/docs/evidence/README.md
 

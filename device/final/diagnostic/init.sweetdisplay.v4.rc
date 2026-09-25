@@ -1,0 +1,31 @@
+# FINAL-BOOT BRINGUP V4 host-side source. Not installed on stock.
+# Exact recovery init/ueventd/enforcing policy remain in use. The ramdisk builder
+# supplies stock-mode empty /mnt and /debug_ramdisk first-stage mountpoints plus
+# the empty /apex mountpoint required for second-stage tmpfs. No persistent
+# partition is mounted.
+
+on early-init
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+
+on init
+    export ANDROID_ROOT /system
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+on late-init
+    start sweetdisplay-diag-v4
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+service sweetdisplay-diag-v4 /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

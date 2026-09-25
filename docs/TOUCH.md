@@ -1,13 +1,40 @@
-# Touch — design, NOT YET TESTED
+# Touch — DEVICE PHASE 2C-T PARTIAL
 
-Inventory /proc/bus/input/devices first; after minimal boot, enumerate evdev capability bits and ABS ranges, never hardcode event node numbers. Log EV_ABS multitouch slots/tracking IDs/positions/pressure when exposed, BTN_TOUCH and SYN_REPORT; handle SYN_DROPPED by resynchronizing device state. Touch vendor, coordinate limits and orientation remain unknown.
+Phase 2C-T validates a deliberately narrow development link: ordinary Android
+`MotionEvent` capture travels through the already authorized ADB-forwarded
+SweetDisplay connection and becomes Windows touch injection only after an
+explicit profile/configuration/ready exchange. It is not a USB HID gadget,
+does not enumerate a new device, and does not modify ConfigFS, UDC, USB
+composition, Android input state, accessibility, SELinux or AVB.
 
-Establish local down/up/contact continuity. Normalize observed axis ranges, apply explicit rotation/mirroring, then scale and clamp to advertised logical coordinates. Test each corner and moving contacts for 0/90/180/270 degree orientation. Record touch timestamps and clock domains.
+The Windows host dynamically identifies the active SweetDisplay target and
+derives its current geometry and opaque topology token. The phone normalizes the
+content rectangle to 0..65535; the host maps it once to that target. It neither
+hard-codes a monitor index/origin nor uses raw evdev input. Real corner and
+drag controls reached the independent Display 3 target without observed swap,
+mirror, duplicate rotation or inset offset. One and two independent contacts
+produced the expected pointer down/move/up transitions.
 
-Then use HID gadget with Digitizers usage page and Touch Screen top-level collection, initially one contact. Descriptor must carry correct absolute X/Y, tip state, contact ID and required contact-count/capability reports; validate against Microsoft's touchscreen requirements, not a mouse or keyboard gadget example. Multi-contact framing follows a verified single-touch descriptor.
+Every contact record includes a bounded slot, action, normalized position,
+optional pressure, active-contact mask and monotonic device timestamp. The host
+rejects stale sessions, unexpected state transitions and changed topology.
+DEVICE PHASE 2C-T remains PARTIAL because its historical controlled restart
+recorded timeout then invalid-parameter around release; that historical outcome
+is not relabelled.
 
-Windows touch-to-monitor association is a separate milestone. A generic digitizer may map to the primary monitor until configured; USB enumeration alone does not prove targeting of the indirect display. Investigate documented association/calibration and validate all monitor arrangements and rotations.
+The separately authorized DEVICE PHASE 2C-T1 follow-up is VERIFIED. Its audit
+proved that the old timeout was returned by `InjectTouchInput`, while the old
+invalid-parameter value was captured too late to attribute to that API. The
+transport worker now solely owns initialization, injection and release; desired
+and successfully delivered coordinates are separate; active contacts receive
+50 ms UPDATE keepalives; teardown sends matching all-active UPDATE then UP; and
+failed release retains state and blocks reuse. Windows-only stress and repeated
+real single-/two-contact disconnects ended with no stuck contact or unexplained
+API failure. This does not authorize HID, calibration, native input, Phase 2C-1
+or Phase 3E.
 
-Acceptance: move Spotify onto the SweetDisplay monitor, touch Next on the phone, and observe that exact control activate. No Spotify account automation or messaging is involved. Buttons may later use a separate consumer-control collection.
-
-References: [Linux HID gadget](https://docs.kernel.org/usb/gadget_hid.html), [Windows touchscreen collections](https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/touchscreen-required-hid-top-level-collections).
+The relevant profile and acceptance details are in [the protocol](PROTOCOL.md),
+[the injection lifetime](TOUCH_PROTOCOL.md), [DEVICE PHASE 2C-T results](device/DEVICE_PHASE2CT_RESULTS.md)
+and [DEVICE PHASE 2C-T1 results](device/DEVICE_PHASE2CT1_RESULTS.md). Windows
+injection follows [InjectTouchInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-injecttouchinput)'s documented initialization and
+pointer-lifecycle requirements.

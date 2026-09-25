@@ -1,0 +1,49 @@
+# Host-side design input for the future private ramdisk.
+# No USB gadget, network, userdata, metadata or block-device mount is performed.
+
+on early-init
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+
+on init
+    export ANDROID_ROOT /system
+    mkdir /dev 0755 root root
+    mkdir /dev/dri 0755 root root
+    mkdir /dev/input 0755 root root
+    mkdir /proc 0755 root root
+    mkdir /sys 0755 root root
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+    write /sys/class/backlight/panel0-backlight/brightness 200
+
+on late-init
+    trigger early-fs
+    trigger fs
+    trigger post-fs
+    trigger post-fs-data
+    trigger early-boot
+    trigger boot
+
+on fs
+    restorecon_recursive /system/bin
+
+on boot
+    write /sys/class/backlight/panel0-backlight/brightness 200
+    start sweetdisplay-diag
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+# FINAL-BOOT 1 diagnostic exception: the exact stock recovery policy already
+# grants this domain display, input and reboot access.  A dedicated least-
+# privilege domain is required before this becomes a distributable product.
+service sweetdisplay-diag /system/bin/recovery
+    class core
+    user root
+    group root graphics input
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

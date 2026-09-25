@@ -1,0 +1,34 @@
+# FINAL-BOOT 1B host-only design input. This file is not installed on stock.
+# It keeps the exact recovery init and enforcing policy while starting the
+# diagnostic directly from late-init. No Android partition or persistent path
+# is mounted, and no USB gadget or network function is created.
+
+on early-init
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+
+on init
+    export ANDROID_ROOT /system
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+# Avoid the stock fs/post-fs/post-fs-data/boot chain. The diagnostic has no
+# dependency on fstab, logical partitions, userdata, metadata or properties.
+on late-init
+    start sweetdisplay-diag-v2
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+# Recovery-domain reuse remains a bounded diagnostic exception. The exact stock
+# recovery policy stays enforcing; a production image still needs its own domain.
+service sweetdisplay-diag-v2 /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

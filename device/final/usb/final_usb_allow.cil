@@ -1,0 +1,9 @@
+; FINAL-USB enforcing-policy delta for the existing recovery-domain endpoint.
+; The stock policy already grants recovery CAP_NET_ADMIN and tcp_socket
+; create/ioctl.  Candidate 2 proved that socket creation is the next denied
+; boundary.  These rules add only the server operations used by
+; sweetdisplay_usbd and binding to the ordinary IPv4 node/port labels.
+
+(allow recovery self (tcp_socket (ioctl read write create getattr bind listen accept setopt shutdown)))
+(allow recovery node (tcp_socket (node_bind)))
+(allow recovery port (tcp_socket (name_bind)))

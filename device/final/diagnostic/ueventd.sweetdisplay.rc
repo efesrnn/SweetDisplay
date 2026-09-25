@@ -1,0 +1,10 @@
+subsystem drm
+    devname uevent_devpath
+    dirname /dev/dri
+
+subsystem input
+    devname uevent_devpath
+    dirname /dev/input
+
+/dev/dri/*       0660 root graphics
+/dev/input/*     0660 root input

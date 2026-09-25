@@ -11,6 +11,7 @@
 #include <exception>
 #include "DesktopSample.h"
 #include "../shared/ContentClassification.h"
+#include "TransportContentPolicy.h"
 namespace SweetDisplay::FirstFail {
 using Microsoft::WRL::ComPtr;
 struct Record {Handoff::State state{};uint64_t receive=0,acquired=0,sampled=0,hash=0,texture=0;uint32_t nonce=0,counter=0,previous=0,published=0,reason=0;uint64_t renderQpc=0;};
@@ -22,15 +23,15 @@ inline void PrivateDirectory(const std::wstring& output){
 }
 class Diagnostic {
  PatternOracle::Mapping producer;std::deque<Record> history;std::wstring output;uint32_t expected=0,previous=0;bool frozen=false;
- bool classified=false;FILE* classifications=nullptr;uint64_t counts[6]{},epoch=0,generation=0,identities[Handoff::Capacity]{},lastFlush=0;
+ bool classified=false,transportContent=false;FILE* classifications=nullptr;uint64_t counts[6]{},counterOnly=0,epoch=0,generation=0,identities[Handoff::Capacity]{},lastFlush=0;
  FILE* File(const wchar_t* name){FILE* f=nullptr;if(_wfopen_s(&f,(output+L"/"+name).c_str(),L"w")||!f)throw std::runtime_error("Cannot write first-fail context");return f;}
 public:
- ~Diagnostic(){if(classifications){if(std::uncaught_exceptions()&&!counts[Content::D]&&!counts[Content::E])++counts[Content::D];fclose(classifications);FILE* f=nullptr;if(!_wfopen_s(&f,(output+L"/classification-result.json").c_str(),L"w")&&f){fprintf(f,"{\"version\":1,\"A\":%llu,\"B\":%llu,\"C\":%llu,\"D\":%llu,\"E\":%llu}\n",counts[1],counts[2],counts[3],counts[4],counts[5]);fclose(f);}}}
- void Init(const std::wstring& dir,uint32_t nonce,const Handoff::Connect& config,ID3D11Texture2D* const* textures,bool corrected=false){
+ ~Diagnostic(){if(classifications){if(std::uncaught_exceptions()&&!counts[Content::D]&&counts[Content::E]==counterOnly)++counts[Content::D];fclose(classifications);FILE* f=nullptr;if(!_wfopen_s(&f,(output+L"/classification-result.json").c_str(),L"w")&&f){fprintf(f,"{\"version\":1,\"A\":%llu,\"B\":%llu,\"C\":%llu,\"D\":%llu,\"E\":%llu,\"transport_content_policy\":%s,\"transport_counter_only\":%llu}\n",counts[1],counts[2],counts[3],counts[4],counts[5],transportContent?"true":"false",counterOnly);fclose(f);}}}
+ void Init(const std::wstring& dir,uint32_t nonce,const Handoff::Connect& config,ID3D11Texture2D* const* textures,bool corrected=false,bool transportPolicy=false){
   PrivateDirectory(dir);output=dir;expected=nonce;
   if(std::filesystem::exists(output+L"/first-failure.json")||std::filesystem::exists(output+L"/first-failure-crop.bmp"))throw std::runtime_error("Refusing to overwrite first-fail evidence");
   producer.Open(nonce,false);
-  classified=corrected;epoch=config.epoch;generation=producer.data->generation;
+  classified=corrected;transportContent=transportPolicy;epoch=config.epoch;generation=producer.data->generation;
   for(uint32_t i=0;i<Handoff::Capacity;++i)identities[i]=uint64_t(textures[i]);
   if(classified){classifications=File(L"classifications.csv");fprintf(classifications,"frame_id,source_qpc,class,reason,nonce,counter,previous_counter,published,render_qpc,rgb_hash,reference_begin_qpc,reference_end_qpc,reference_hash1,reference_hash2,reference_error,reference_x,reference_y,reference_match\n");}
   FILE* f=File(L"resource-generation.txt");
@@ -55,6 +56,9 @@ public:
    fprintf(classifications,"%llu,%llu,%u,%u,%u,%u,%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%lu,%ld,%ld,%u\n",frame.id,frame.qpc,kind,r.reason,r.nonce,r.counter,previous,r.published,r.renderQpc,DesktopSample::RgbHash(pixels),reference.begin,reference.end,reference.hash1,reference.hash2,reference.error,reference.x,reference.y,reference.matches);
    if(kind==Content::D||kind==Content::E||r.sampled-lastFlush>=producer.data->frequency){fflush(classifications);lastFlush=r.sampled;}
    stop=(kind==Content::D||kind==Content::E)?uint32_t(kind):0;
+   // Keep E/reason=4 in the evidence. Transport validity is decided independently
+   // by sequence, CRC, exact ACK, and subsequent independent decode/content proof.
+   if(TransportContent::CounterOnly(transportContent,kind,r.reason,pattern)){++counterOnly;stop=0;}
    if(!stop&&pattern){previous=(std::max)(previous,r.counter);InterlockedExchange(&producer.data->hostCounter,LONG(r.counter));}
   }
   if(history.size()==120)history.pop_front();history.push_back(r);

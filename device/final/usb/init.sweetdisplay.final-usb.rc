@@ -1,0 +1,85 @@
+# FINAL-USB candidate 1. Host-side source; never installed on stock.
+# The gadget, address and TCP listener exist only in this RAM-only boot.
+
+on early-init
+    write /sys/fs/selinux/enforce 1
+    exec_start sweetdisplay-enforce-probe-final-usb
+
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+    start sweetdisplay-coldboot-watchdog-final-usb
+
+on init
+    export ANDROID_ROOT /system
+    write /sys/class/backlight/panel0-backlight/brightness 200
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+    mount configfs none /config
+    mkdir /config/usb_gadget/g1 0770 root root
+    write /config/usb_gadget/g1/bcdUSB 0x0200
+    write /config/usb_gadget/g1/idVendor 0x05C6
+    write /config/usb_gadget/g1/idProduct 0xA4A1
+    mkdir /config/usb_gadget/g1/strings/0x409 0770 root root
+    write /config/usb_gadget/g1/strings/0x409/manufacturer SweetDisplay
+    write /config/usb_gadget/g1/strings/0x409/product SweetDisplay_NCM
+    mkdir /config/usb_gadget/g1/functions/ncm.0
+    mkdir /config/usb_gadget/g1/configs/b.1 0770 root root
+    mkdir /config/usb_gadget/g1/configs/b.1/strings/0x409 0770 root root
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration ncm
+    write /config/usb_gadget/g1/configs/b.1/MaxPower 900
+    write /config/usb_gadget/g1/os_desc/use 1
+    write /config/usb_gadget/g1/os_desc/b_vendor_code 0x1
+    write /config/usb_gadget/g1/os_desc/qw_sign MSFT100
+    symlink /config/usb_gadget/g1/configs/b.1 /config/usb_gadget/g1/os_desc/b.1
+    symlink /config/usb_gadget/g1/functions/ncm.0 /config/usb_gadget/g1/configs/b.1/f1
+
+on property:ro.cold_boot_done=true
+    write /config/usb_gadget/g1/UDC a600000.dwc3
+    start sweetdisplay-diag-final-usb
+    start sweetdisplay-usbd-final-usb
+
+on property:init.svc.sweetdisplay-diag-final-usb=stopped
+    setprop sys.powerctl reboot
+
+on property:init.svc.sweetdisplay-coldboot-watchdog-final-usb=stopped
+    setprop sys.powerctl reboot
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+service sweetdisplay-enforce-probe-final-usb /system/bin/recovery --early-probe
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-coldboot-watchdog-final-usb /system/bin/recovery --coldboot-watchdog
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-diag-final-usb /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-usbd-final-usb /system/bin/sweetdisplay-usbd
+    class core
+    user root
+    group root inet net_admin
+    capabilities NET_ADMIN
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

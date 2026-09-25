@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "gate_result": "VERIFIED",
+  "recorded_at": "2026-09-20",
+  "device": {
+    "manufacturer": "Xiaomi",
+    "model": "M2101K6G",
+    "bootloader_product": "sweet",
+    "android_product": "sweet_tr",
+    "region": "Turkey",
+    "rom_version": "V14.0.2.0.TKFTRXM",
+    "android_version": 13
+  },
+  "official_host": {
+    "status": "VERIFIED",
+    "canonical_host": "bigota.d.miui.com",
+    "transfer_host": "bn.d.miui.com",
+    "redirect_observed": false,
+    "basis": "Xiaomi's mi.com support page links to bigota.d.miui.com; the exact bigota objects returned HTTP 200 and matched the bn.d.miui.com CDN objects by Content-Length and ETag."
+  },
+  "archives": [
+    {
+      "type": "fastboot",
+      "filename": "sweet_tr_global_images_V14.0.2.0.TKFTRXM_20230803.0000.00_13.0_tr_7ab6f47e67.tgz",
+      "url": "https://bigota.d.miui.com/V14.0.2.0.TKFTRXM/sweet_tr_global_images_V14.0.2.0.TKFTRXM_20230803.0000.00_13.0_tr_7ab6f47e67.tgz",
+      "byte_size": 5934114812,
+      "sha256": "8367f915a4e8ca7018bc0fa3fe1a70048b38154dc0c56ec3e5870f4993dae40d",
+      "md5": "7ab6f47e67f2679e5974bbad86238ecc",
+      "http_etag": "955F433198AD728D0C426DC4F4B15974-400",
+      "http_last_modified": "2023-08-28T07:01:11Z"
+    },
+    {
+      "type": "recovery",
+      "filename": "miui_SWEETTRGlobal_V14.0.2.0.TKFTRXM_4dd7b72cd7_13.0.zip",
+      "url": "https://bigota.d.miui.com/V14.0.2.0.TKFTRXM/miui_SWEETTRGlobal_V14.0.2.0.TKFTRXM_4dd7b72cd7_13.0.zip",
+      "byte_size": 3988152798,
+      "sha256": "60d2828c30a421b2e83b7cc4975d9ece33ae642c2b225f6eba304d8c9c5b409d",
+      "md5": "4dd7b72cd76aee890762b98c031a04f7",
+      "http_etag": "F40D9A87045B4B679EA6906AF9E0CE94-400",
+      "http_last_modified": "2023-08-16T07:56:37Z"
+    }
+  ],
+  "images": [
+    {
+      "filename": "boot.img",
+      "partition": "boot",
+      "byte_size": 134217728,
+      "sha256": "0a9dfe4d30b600115a5484fde873cdd293c3cc99683aebcdbcc3b9176b17a8f3",
+      "present_in": ["fastboot", "recovery"],
+      "copies_identical": true,
+      "parsed": {
+        "magic": "ANDROID!",
+        "header_version": 2,
+        "page_size": 4096,
+        "os_version": "13.0.0",
+        "os_patch_level": "2023-08",
+        "kernel_size": 18156887,
+        "kernel_compression": "gzip",
+        "kernel_load_address": "0x00008000",
+        "ramdisk_size": 812101,
+        "ramdisk_compression": "gzip",
+        "ramdisk_load_address": "0x01000000",
+        "second_size": 0,
+        "tags_load_address": "0x00000100",
+        "command_line": "androidboot.hardware=qcom androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=1 androidboot.usbcontroller=a600000.dwc3 loop.max_part=7 buildvariant=user",
+        "recovery_dtbo_size": 0,
+        "dtb_size": 3276863,
+        "dtb_load_address": "0x0000000001f00000",
+        "avb_original_image_size": 22257664,
+        "avb_footer_version": "1.0"
+      }
+    },
+    {
+      "filename": "recovery.img",
+      "partition": "recovery",
+      "byte_size": 134217728,
+      "sha256": "4dabd9add3145acaa81faf42f760dbdac7daadd6175d9e047d75b2e5131ede61",
+      "present_in": ["fastboot"],
+      "parsed": {
+        "magic": "ANDROID!",
+        "header_version": 2,
+        "page_size": 4096,
+        "os_version": "13.0.0",
+        "os_patch_level": "2023-08",
+        "kernel_size": 18156887,
+        "kernel_compression": "gzip",
+        "kernel_load_address": "0x00008000",
+        "ramdisk_size": 18412603,
+        "ramdisk_compression": "gzip",
+        "ramdisk_load_address": "0x01000000",
+        "second_size": 0,
+        "tags_load_address": "0x00000100",
+        "command_line": "androidboot.hardware=qcom androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=1 androidboot.usbcontroller=a600000.dwc3 loop.max_part=7 buildvariant=user",
+        "recovery_dtbo_size": 7078877,
+        "recovery_dtbo_offset": "0x00000000022e2000",
+        "dtb_size": 3276863,
+        "dtb_load_address": "0x0000000001f00000",
+        "avb_original_image_size": 46940160,
+        "avb_footer_version": "1.0"
+      }
+    },
+    {
+      "filename": "dtbo.img",
+      "partition": "dtbo",
+      "byte_size": 33554432,
+      "sha256": "1ebc0d5fa3134f7237b407a4331a006a56c953f24c392561343e0c06227b649c",
+      "present_in": ["fastboot", "recovery"],
+      "copies_identical": true,
+      "parsed": {
+        "dt_table_magic": "0xd7b7ab1e",
+        "dt_table_total_size": 7078877,
+        "page_size": 4096,
+        "version": 0,
+        "entry_count": 40,
+        "entry_identity_fields": "all id, rev and custom fields are zero",
+        "runtime_index": 12,
+        "entry_12_model": "SWEET",
+        "entry_12_compatible": ["qcom,sdmmagpie-qrd", "qcom,sdmmagpie", "qcom,qrd"],
+        "entry_12_msm_id": "0x0000016d",
+        "entry_12_board_id": "0x0000002e",
+        "avb_original_image_size": 7078877,
+        "avb_footer_version": "1.0"
+      }
+    },
+    {
+      "filename": "vbmeta.img",
+      "partition": "vbmeta",
+      "byte_size": 8192,
+      "sha256": "9a691b87896da1714d65c47fc5d45a597fcfb306d62a2497634e165f84fc5c2f",
+      "present_in": ["fastboot", "recovery"],
+      "copies_identical": true
+    },
+    {
+      "filename": "vbmeta_system.img",
+      "partition": "vbmeta_system",
+      "byte_size": 4096,
+      "sha256": "9c8c54b4e0456934a14a62ef68f35e93b5b15d3906063a8aa4b72ea70ca02b70",
+      "present_in": ["fastboot", "recovery"],
+      "copies_identical": true
+    },
+    {
+      "filename": "super.img",
+      "partition": "super",
+      "byte_size": 8105485628,
+      "sha256": "314488dca73b5e42daf32e9e64ce2f3b6610097ae3a1168d1ce6bfbbf64d7db3",
+      "present_in": ["fastboot"],
+      "parsed": {
+        "format": "Android sparse 1.0",
+        "block_size": 4096,
+        "chunk_count": 395,
+        "expanded_size": 9126805504,
+        "liblp_version": "10.0",
+        "liblp_metadata_max_size": 65536,
+        "liblp_metadata_slot_count": 2,
+        "liblp_header_flags": 0,
+        "primary_backup_checksums_valid": true,
+        "metadata_slots_equal": true,
+        "logical_group": "qti_dynamic_partitions",
+        "logical_group_maximum_size": 9122611200,
+        "logical_group_used_size": 8134586368
+      }
+    }
+  ],
+  "absent_images": [
+    {
+      "filename": "vendor_boot.img",
+      "status": "absent from both archives"
+    },
+    {
+      "filename": "init_boot.img",
+      "status": "absent from both archives"
+    },
+    {
+      "filename": "vbmeta_vendor.img",
+      "status": "absent; the fastboot partition manifest defines vbmeta_vendor with an empty filename"
+    }
+  ],
+  "logical_partitions": [
+    {"name": "odm", "byte_size": 1490944, "attributes": ["readonly"]},
+    {"name": "product", "byte_size": 4491284480, "attributes": ["readonly"]},
+    {"name": "system", "byte_size": 1338118144, "attributes": ["readonly"]},
+    {"name": "system_ext", "byte_size": 806674432, "attributes": ["readonly"]},
+    {"name": "vendor", "byte_size": 1496735744, "attributes": ["readonly"]},
+    {"name": "mi_ext", "byte_size": 282624, "attributes": ["readonly"]}
+  ],
+  "avb": {
+    "minimum_libavb_version": "1.0",
+    "algorithm": "SHA256_RSA2048",
+    "public_key_sha1": "b2a02f1e56e366d727a1a8e089762fe0b91bbc84",
+    "top_level_rollback_index": 0,
+    "top_level_flags": 0,
+    "chain": {
+      "partition": "vbmeta_system",
+      "rollback_index_location": 2,
+      "public_key_sha1": "b2a02f1e56e366d727a1a8e089762fe0b91bbc84"
+    },
+    "top_level_hash_partitions": ["boot", "dtbo"],
+    "top_level_hashtree_partitions": ["mi_ext", "odm", "vendor"],
+    "system_hashtree_partitions": ["product", "system", "system_ext"],
+    "recovery": {
+      "algorithm": "SHA256_RSA2048",
+      "rollback_index": 1,
+      "flags": 0
+    }
+  },
+  "safety": {
+    "phone_writes": false,
+    "flash_scripts_executed": false,
+    "fastboot_boot_executed": false,
+    "phase_2_started": false
+  }
+}

@@ -1,5 +1,9 @@
 // Copyright (c) SweetDisplay contributors. See repository LICENSE.md.
 #define NOMINMAX
+#ifdef SWEETDISPLAY_TRANSPORT
+#include "../protocol/TransportSender.h"
+#include "TouchInput.h"
+#endif
 #include "../shared/FrameHandoffProtocol.h"
 #include <d3d11_1.h>
 #include <dxgi1_4.h>
@@ -105,7 +109,7 @@ struct Gpu {
         context->Unmap(sample.Get(),0);
     }
 };
-struct Options {uint32_t seconds=35,slow=0,hold=0,sessions=1,nonce=0,inspect=0;bool sample=false,firstFail=false,classified=false,encode=false;SweetDisplay::Encoding::Settings encoding;std::wstring output;};
+struct Options {uint32_t seconds=35,slow=0,hold=0,sessions=1,nonce=0,inspect=0,transportPort=0,touchMode=0;bool sample=false,firstFail=false,classified=false,encode=false,microTiming=false,flightRecorder=false,reducedEvidence=false;SweetDisplay::Encoding::Settings encoding;std::wstring output,stopFile;};
 static bool Accounted(const State& s,uint64_t base){
     if(s.contention<base)return false;
     return s.stats.source==s.stats.delivered+s.stats.producerDrops+s.stats.hostQueueDrops+s.stats.busy+s.stats.invalid+s.stats.depth+s.stats.held+s.contention-base;
@@ -126,10 +130,16 @@ static void Run(const Options& o,uint32_t session){
         auto f=Open(prefix+L"-absent.json");fprintf(f.get(),"{\"connected\":%u,\"source_delta\":%llu,\"active\":%u,\"no_host\":%llu,\"seconds\":%.9f,\"source_fps\":%.6f}\n",s.connected,s.totalSource-first,s.active,s.noHost,elapsed,(s.totalSource-first)/elapsed);
         if(s.connected||!s.active||s.totalSource<=first)throw Error("absent Host source did not advance",ERROR_INVALID_DATA);return;}
     Gpu gpu;gpu.Init(s,o.sample,o.encode);
+    SweetDisplay::Protocol::EncodedSink* sink=nullptr;
+#ifdef SWEETDISPLAY_TRANSPORT
+    std::unique_ptr<SweetDisplay::TouchInput::Session> touch;
+    std::unique_ptr<SweetDisplay::Transport::Sender> transport;
+    if(o.transportPort){SweetDisplay::FirstFail::PrivateDirectory(o.output);if(o.touchMode)touch=std::make_unique<SweetDisplay::TouchInput::Session>(o.touchMode==1?SweetDisplay::TouchInput::Mode::Validate:SweetDisplay::TouchInput::Mode::Inject,o.output);transport=std::make_unique<SweetDisplay::Transport::Sender>(uint16_t(o.transportPort),o.output,touch.get(),o.reducedEvidence,o.flightRecorder?400000u:100000u,o.flightRecorder?250000u:150000u);sink=transport.get();}
+#endif
     std::unique_ptr<SweetDisplay::Encoding::Encoder> encoder;
-    if(o.encode)encoder=std::make_unique<SweetDisplay::Encoding::Encoder>(gpu.device.Get(),gpu.context.Get(),s.adapter,o.encoding,o.output,freq);
+    if(o.encode)encoder=std::make_unique<SweetDisplay::Encoding::Encoder>(gpu.device.Get(),gpu.context.Get(),s.adapter,o.encoding,o.output,freq,sink);
     SweetDisplay::FirstFail::Diagnostic diagnostic;
-    if(o.firstFail){ID3D11Texture2D* textures[Capacity]{};for(uint32_t i=0;i<Capacity;++i)textures[i]=gpu.textures[i].Get();diagnostic.Init(o.output,o.nonce,gpu.config,textures,o.classified);}
+    if(o.firstFail){ID3D11Texture2D* textures[Capacity]{};for(uint32_t i=0;i<Capacity;++i)textures[i]=gpu.textures[i].Get();diagnostic.Init(o.output,o.nonce,gpu.config,textures,o.classified,o.transportPort!=0);}
     Io(file.value,ConnectIo,&gpu.config,sizeof(gpu.config),nullptr,0);
     printf("Frame source: CONNECTED; capacity=%u; session=%u\n",Capacity,session);
     auto csv=Open(prefix+L"-frames.csv");
@@ -139,9 +149,13 @@ static void Run(const Options& o,uint32_t session){
     uint64_t start=Qpc(),lastPrint=start,previousCount=0,received=0,firstId=0,lastId=0,firstQpc=0,lastQpc=0,minInterval=UINT64_MAX,maxInterval=0,gaps=0,changes=0,lastHash=0,matches=0;
     uint64_t contentionStart=s.contention;double ageTotal=0,maxAge=0;
     uint64_t lastPresentation=0;
+    SweetDisplay::MicroTiming::DegradationDetector degradationDetector;SweetDisplay::MicroTiming::DegradationDetector::Decision degradationDecision{};uint64_t detectorLast=start;
+    if(o.flightRecorder)degradationDetector.Observe(start,s.stats.source,received,freq,degradationDecision);
     for(;!stopping && Qpc()-start<uint64_t(o.seconds)*freq;){
-        if(encoder)encoder->Pump();
-        s=Read(file.value,FetchIo);
+        const auto iterationBegin=SweetDisplay::MicroTiming::Begin();uint64_t iterationFrame=0;
+        if(!o.stopFile.empty()&&GetFileAttributesW(o.stopFile.c_str())!=INVALID_FILE_ATTRIBUTES){stopping=true;break;}
+        const auto acquireBegin=SweetDisplay::MicroTiming::Begin();s=Read(file.value,FetchIo);iterationFrame=s.frame.id;SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostFrameAcquire,acquireBegin,iterationFrame,0,s.frame.id?1u:0u,0);
+        const auto admissionBegin=SweetDisplay::MicroTiming::Begin();
         if(s.error)throw Error("driver GPU handoff error",DWORD(s.error));
         if(o.classified){
             if(s.epoch!=gpu.config.epoch||!s.connected||s.stats.highWater>Capacity||s.stats.invalid||s.stats.delivered!=received)throw Error("integrity: connection/queue/ack association",ERROR_INVALID_DATA);
@@ -149,17 +163,18 @@ static void Run(const Options& o,uint32_t session){
             // Re-read only a mismatch; never edit or omit any recorded frame/drop.
             if(!Accounted(s,contentionStart)){bool resolved=false;for(int retry=0;retry<10&&!resolved;++retry){Sleep(1);auto settled=Read(file.value);resolved=Accounted(settled,contentionStart);}if(!resolved)throw Error("integrity: exact drop accounting",ERROR_INVALID_DATA);}
         }
+        SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostAdmission,admissionBegin,iterationFrame);
         if(s.frame.id){
-            auto& frame=s.frame;uint64_t receive=Qpc();
+            auto& frame=s.frame;SweetDisplay::MicroTiming::Context trace(frame.id,0);uint64_t receive=Qpc();
             if(!ValidFrame(frame,gpu.config.epoch,lastId,lastQpc,receive))throw Error("invalid/out-of-order frame",ERROR_INVALID_DATA);
             if(o.classified&&frame.presentation<=lastPresentation)throw Error("integrity: presentation ordering",ERROR_INVALID_DATA);
-            HRESULT hr=S_OK;uint64_t waitStart=Qpc();
-            do{hr=gpu.mutexes[frame.slot]->AcquireSync(1,0);if(hr==WAIT_TIMEOUT)Sleep(1);}while(hr==WAIT_TIMEOUT&&!stopping&&Qpc()-waitStart<freq/2);
+            HRESULT hr=S_OK;uint64_t waitStart=Qpc();uint32_t mutexRetries=0;
+            do{hr=gpu.mutexes[frame.slot]->AcquireSync(1,0);if(hr==WAIT_TIMEOUT){++mutexRetries;Sleep(1);}}while(hr==WAIT_TIMEOUT&&!stopping&&Qpc()-waitStart<freq/2);
             Hr(hr,"Host AcquireSync");
-            const uint64_t resourceAcquired=Qpc();
+            const uint64_t resourceAcquired=Qpc();SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::KeyedMutexWait,waitStart,frame.id,0,mutexRetries,0);
             if(o.hold){if(!received){printf("TEST: GPU lease HELD; crash-cleanup probe enabled\n");fflush(stdout);}Sleep(o.hold);}
             uint32_t nonce=0,counter=0;uint64_t hash=0;
-            try{if(o.sample)gpu.Sample(frame.slot,nonce,counter,hash);}
+            const auto diagnosticBegin=SweetDisplay::MicroTiming::Begin();try{if(o.sample)gpu.Sample(frame.slot,nonce,counter,hash);}
             catch(...){gpu.mutexes[frame.slot]->ReleaseSync(0);throw;}
             const uint64_t sampleComplete=o.sample?Qpc():0;
             uint32_t diagnosticFailure=0;
@@ -168,35 +183,50 @@ static void Run(const Options& o,uint32_t session){
                 diagnosticFailure=diagnostic.Observe(record,gpu.samplePixels);
                 if(diagnosticFailure){try{diagnostic.Freeze(record,gpu.device.Get(),gpu.context.Get(),gpu.textures[frame.slot].Get());}catch(...){gpu.mutexes[frame.slot]->ReleaseSync(0);throw;}}
             }
+            SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostSampleDiagnostic,diagnosticBegin,frame.id,0,o.firstFail?1u:0u,o.sample?1u:0u);
             if(encoder&&!diagnosticFailure){try{encoder->Submit(gpu.textures[frame.slot].Get(),frame,nonce,counter);}catch(...){gpu.mutexes[frame.slot]->ReleaseSync(0);throw;}}
             Hr(gpu.mutexes[frame.slot]->ReleaseSync(0),"Host ReleaseSync");
             Ack ack=Packet<Ack>();ack.epoch=frame.epoch;ack.id=frame.id;ack.slot=frame.slot;
-            Io(file.value,AckIo,&ack,sizeof(ack),nullptr,0);
+            const auto ackBegin=SweetDisplay::MicroTiming::Begin();Io(file.value,AckIo,&ack,sizeof(ack),nullptr,0);SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::DriverAck,ackBegin,frame.id);
+            const auto returnBegin=SweetDisplay::MicroTiming::Begin();
             uint64_t gap=lastId?frame.id-lastId-1:0;gaps+=gap;
             double interval=lastQpc?Milliseconds(frame.qpc-lastQpc,freq):0,age=Milliseconds(receive-frame.qpc,freq);
             if(lastQpc){minInterval=(std::min)(minInterval,frame.qpc-lastQpc);maxInterval=(std::max)(maxInterval,frame.qpc-lastQpc);}
             if(!received){firstId=frame.id;firstQpc=frame.qpc;}
             if(received&&o.sample&&hash!=lastHash)++changes;
             if(o.sample&&nonce==o.nonce)++matches;
-            fprintf(csv.get(),"%llu,%llu,%llu,%.6f,%.6f,%u,%u,%u,%u,%llu,%u,%u,%llu,%llu,%llu,%llu,%.6f,%llu,%u,%p\n",frame.id,frame.qpc,receive,interval,age,frame.width,frame.height,frame.format,frame.flags,gap,nonce,counter,hash,frame.presentation,resourceAcquired,sampleComplete,Milliseconds(resourceAcquired-waitStart,freq),frame.epoch,frame.slot,gpu.textures[frame.slot].Get());
+            const auto evidenceBegin=SweetDisplay::MicroTiming::Begin();fprintf(csv.get(),"%llu,%llu,%llu,%.6f,%.6f,%u,%u,%u,%u,%llu,%u,%u,%llu,%llu,%llu,%llu,%.6f,%llu,%u,%p\n",frame.id,frame.qpc,receive,interval,age,frame.width,frame.height,frame.format,frame.flags,gap,nonce,counter,hash,frame.presentation,resourceAcquired,sampleComplete,Milliseconds(resourceAcquired-waitStart,freq),frame.epoch,frame.slot,gpu.textures[frame.slot].Get());SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostEvidence,evidenceBegin,frame.id);
             ++received;lastId=frame.id;lastQpc=frame.qpc;lastHash=hash;ageTotal+=age;maxAge=(std::max)(maxAge,age);
             lastPresentation=frame.presentation;
             if(diagnosticFailure){fflush(csv.get());Io(file.value,DisconnectIo,nullptr,0,nullptr,0);file.Reset();throw Error(o.classified?(diagnosticFailure==SweetDisplay::Content::D?"D: integrity failure; bounded evidence frozen":"E: UNCLASSIFIED content; bounded evidence frozen"):"first content-oracle failure; bounded evidence frozen",ERROR_INVALID_DATA);}
             if(o.slow)Sleep(o.slow);
-        }else Sleep(2);
-        auto now=Qpc();if(now-lastPrint>=freq){
+            SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostReturn,returnBegin,frame.id);
+        }else{const auto returnBegin=SweetDisplay::MicroTiming::Begin();Sleep(2);SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostReturn,returnBegin,0);}
+        auto now=Qpc();
+        if(o.flightRecorder&&now-detectorLast>=freq){
+            detectorLast=now;
+            if(degradationDetector.Observe(now,s.stats.source,received,freq,degradationDecision)&&SweetDisplay::MicroTiming::Recorder::Instance().Trigger(degradationDecision)){
+                printf("PERF2 TRIGGER qpc=%llu window=%.3fs source_fps=%.3f host_fps=%.3f ratio=%.6f\n",degradationDecision.qpc,degradationDecision.seconds,degradationDecision.sourceFps,degradationDecision.hostFps,degradationDecision.ratio);fflush(stdout);
+            }
+        }
+        if(o.flightRecorder&&SweetDisplay::MicroTiming::Recorder::Instance().PostComplete(now)){printf("PERF2 post-trigger capture complete\n");fflush(stdout);stopping=true;}
+        if(now-lastPrint>=freq){
             const uint64_t contentionDrops=s.contention-contentionStart;
             const uint64_t dropped=s.stats.producerDrops+s.stats.hostQueueDrops+s.stats.busy+s.stats.invalid+contentionDrops;
             fprintf(telemetry.get(),"%llu,%llu,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%u,%u,%u,%llu\n",now,s.epoch,s.connected,s.stats.source,received,s.stats.producerDrops,s.stats.hostQueueDrops,s.stats.busy,s.stats.invalid,contentionDrops,s.stats.depth,s.stats.held,s.stats.highWater,lastId);
             printf("Frames=%llu CurrentFPS=%.2f AverageFPS=%.2f Source=%llu DroppedTotal=%llu DroppedBeforeHost=%llu DroppedByHostQueue=%llu Busy=%llu Invalid=%llu Contention=%llu Queue=%u Held=%u HWM=%u LastID=%llu Age=%.2fms\n",received,double(received-previousCount)*freq/(now-lastPrint),double(received)*freq/(now-start),s.stats.source,dropped,s.stats.producerDrops,s.stats.hostQueueDrops,s.stats.busy,s.stats.invalid,contentionDrops,s.stats.depth,s.stats.held,s.stats.highWater,lastId,lastQpc?Milliseconds(now-lastQpc,freq):0);
             fflush(stdout);fflush(csv.get());fflush(telemetry.get());lastPrint=now;previousCount=received;
         }
+        SweetDisplay::MicroTiming::End(SweetDisplay::MicroTiming::Event::HostIteration,iterationBegin,iterationFrame);
     }
     uint64_t end=Qpc();s=Read(file.value);
     if(o.classified&&!Accounted(s,contentionStart)){for(int retry=0;retry<10&&!Accounted(s,contentionStart);++retry){Sleep(1);s=Read(file.value);}if(!Accounted(s,contentionStart))throw Error("integrity: final drop accounting",ERROR_INVALID_DATA);}
     Io(file.value,DisconnectIo,nullptr,0,nullptr,0);file.Reset();
     double seconds=double(end-start)/freq;
     if(encoder)encoder->Finish(seconds);
+#ifdef SWEETDISPLAY_TRANSPORT
+    if(transport)transport->Finish();
+#endif
     auto report=Open(prefix+L"-result.json");
     fprintf(report.get(),"{\n\"seconds\":%.9f,\"frequency\":%llu,\"epoch\":%llu,\"source_frames\":%llu,\"received\":%llu,\"acknowledged\":%llu,\"fps\":%.6f,\"source_fps\":%.6f,\n\"width\":%u,\"height\":%u,\"format\":%u,\"first_id\":%llu,\"last_id\":%llu,\"id_gaps\":%llu,\"first_qpc\":%llu,\"last_qpc\":%llu,\n\"interval_avg_ms\":%.6f,\"interval_min_ms\":%.6f,\"interval_max_ms\":%.6f,\"age_avg_ms\":%.6f,\"age_max_ms\":%.6f,\n\"dropped_before_host\":%llu,\"dropped_host_queue\":%llu,\"busy\":%llu,\"invalid\":%llu,\"contention\":%llu,\"queue_depth_end\":%u,\"held_end\":%u,\"high_water\":%u,\n\"sample_changes\":%llu,\"nonce_matches\":%llu,\"clean_disconnect\":true\n}\n",
         seconds,freq,s.epoch,s.stats.source,received,s.stats.delivered,received/seconds,s.stats.source/seconds,s.width,s.height,s.format,firstId,lastId,gaps,firstQpc,lastQpc,
@@ -207,6 +237,7 @@ static void Run(const Options& o,uint32_t session){
 }
 int wmain(int argc,wchar_t** argv){
     try{
+        if(!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)&&GetLastError()!=ERROR_ACCESS_DENIED)throw Error("per-monitor DPI awareness",GetLastError());
         Options o;
         for(int i=1;i<argc;++i){std::wstring a=argv[i];
             if(a==L"--sample")o.sample=true;
@@ -214,8 +245,15 @@ int wmain(int argc,wchar_t** argv){
             else if(a==L"--encode-uncapped")o.encoding.uncappedSubmission=true;
             else if(a==L"--first-fail"){o.firstFail=true;o.sample=true;}
             else if(a==L"--classified"){o.classified=true;o.firstFail=true;o.sample=true;}
-            else if(i+1<argc){const wchar_t* v=argv[++i];if(a==L"--seconds")o.seconds=wcstoul(v,nullptr,10);else if(a==L"--output")o.output=v;
+            else if(a==L"--micro-timing")o.microTiming=true;
+            else if(a==L"--flight-recorder")o.flightRecorder=true;
+            else if(a==L"--reduced-evidence")o.reducedEvidence=true;
+            else if(i+1<argc){const wchar_t* v=argv[++i];if(a==L"--seconds")o.seconds=wcstoul(v,nullptr,10);else if(a==L"--output")o.output=v;else if(a==L"--stop-file")o.stopFile=v;
                 else if(a==L"--encode-width")o.encoding.width=wcstoul(v,nullptr,10);else if(a==L"--encode-height")o.encoding.height=wcstoul(v,nullptr,10);else if(a==L"--encode-fps")o.encoding.fps=wcstoul(v,nullptr,10);else if(a==L"--encode-bitrate")o.encoding.bitrate=wcstoul(v,nullptr,10);
+#ifdef SWEETDISPLAY_TRANSPORT
+                else if(a==L"--transport-port")o.transportPort=wcstoul(v,nullptr,10);
+                else if(a==L"--touch-mode"){if(!wcscmp(v,L"validate"))o.touchMode=1;else if(!wcscmp(v,L"inject"))o.touchMode=2;else throw Error("touch mode must be validate or inject",ERROR_INVALID_PARAMETER);}
+#endif
                 else if(a==L"--slow-ms")o.slow=wcstoul(v,nullptr,10);else if(a==L"--hold-ms")o.hold=wcstoul(v,nullptr,10);else if(a==L"--sessions")o.sessions=wcstoul(v,nullptr,10);else if(a==L"--nonce")o.nonce=wcstoul(v,nullptr,16);else if(a==L"--inspect-seconds")o.inspect=wcstoul(v,nullptr,10);else throw Error("unknown option",ERROR_INVALID_PARAMETER);}
             else throw Error("missing option value",ERROR_INVALID_PARAMETER);
         }
@@ -223,7 +261,13 @@ int wmain(int argc,wchar_t** argv){
         if(o.firstFail&&(!o.nonce||o.sessions!=1||o.inspect))throw Error("first-fail requires a nonzero nonce and one streaming session",ERROR_INVALID_PARAMETER);
         if(o.encode&&(o.sessions!=1||o.inspect||o.encoding.width<800||o.encoding.width>2400||o.encoding.height<360||o.encoding.height>1080||(o.encoding.width%2)||(o.encoding.height%2)||!o.encoding.fps||o.encoding.fps>60||o.encoding.bitrate<100000||o.encoding.bitrate>100000000))throw Error("invalid bounded encoder settings",ERROR_INVALID_PARAMETER);
         if(o.encoding.uncappedSubmission&&!o.encode)throw Error("--encode-uncapped requires --encode",ERROR_INVALID_PARAMETER);
+        if(o.transportPort&&(!o.encode||!o.classified||o.transportPort<1024||o.transportPort>65535||o.seconds>(o.flightRecorder?1800u:1200u)||o.sessions!=1))throw Error("invalid bounded transport settings",ERROR_INVALID_PARAMETER);
+        if(o.touchMode&&!o.transportPort)throw Error("touch mode requires transport",ERROR_INVALID_PARAMETER);
+        if(o.microTiming&&(!o.transportPort||!o.classified||o.sessions!=1))throw Error("micro timing requires one classified transport session",ERROR_INVALID_PARAMETER);
+        if(o.flightRecorder&&(!o.transportPort||!o.classified||o.sessions!=1||o.seconds<120||o.microTiming))throw Error("flight recorder requires one >=120-second classified transport session and excludes linear micro timing",ERROR_INVALID_PARAMETER);
+        if(o.reducedEvidence&&!o.microTiming&&!o.flightRecorder)throw Error("reduced evidence requires micro timing or flight recorder",ERROR_INVALID_PARAMETER);
         SetConsoleCtrlHandler(Signal,TRUE);TimerResolution timer;
+        SweetDisplay::MicroTiming::Session micro(o.microTiming||o.flightRecorder?o.output:L"",o.reducedEvidence,o.flightRecorder);
         uint32_t retries=0;
         for(uint32_t i=1;i<=o.sessions&&!stopping;){
             try {Run(o,i);++i;retries=0;if(i<=o.sessions)Sleep(1000);}
@@ -235,7 +279,7 @@ int wmain(int argc,wchar_t** argv){
                 printf("Frame source: DISCONNECTED; reconnect attempt=%u code=%lu\n",retries,e.code);fflush(stdout);Sleep(500);
             }
         }
-        return 0;
+        micro.Finish();return 0;
     }catch(const Error& e){fprintf(stderr,"SweetDisplayHost ERROR: %s; code=%lu (0x%08lX)\n",e.what(),e.code,e.code);return 1;}
     catch(const std::exception& e){fprintf(stderr,"SweetDisplayHost ERROR: %s\n",e.what());return 1;}
 }

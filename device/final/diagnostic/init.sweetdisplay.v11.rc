@@ -1,0 +1,56 @@
+# FINAL-BOOT BRINGUP V11 host-side source. Not installed on stock.
+# V11 retains V10's enforcing, coldboot and rollback model. The diagnostic
+# renders off-screen and waits for page-flip completion before buffer reuse.
+
+on early-init
+    write /sys/fs/selinux/enforce 1
+    exec_start sweetdisplay-enforce-probe-v11
+
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+    start sweetdisplay-coldboot-watchdog-v11
+
+on init
+    export ANDROID_ROOT /system
+    write /sys/class/backlight/panel0-backlight/brightness 200
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+on property:ro.cold_boot_done=true
+    start sweetdisplay-diag-v11
+
+on property:init.svc.sweetdisplay-diag-v11=stopped
+    setprop sys.powerctl reboot
+
+on property:init.svc.sweetdisplay-coldboot-watchdog-v11=stopped
+    setprop sys.powerctl reboot
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+service sweetdisplay-enforce-probe-v11 /system/bin/recovery --early-probe
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-coldboot-watchdog-v11 /system/bin/recovery --coldboot-watchdog
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-diag-v11 /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot

@@ -10,8 +10,10 @@
 #include <functional>
 #include <limits>
 namespace SweetDisplay::Protocol {
-constexpr uint16_t Major=1, Minor=0, HeaderBytes=48;
+constexpr uint16_t Major=1, Minor=0, TouchProfileMinor=1, HeaderBytes=48;
 constexpr uint32_t MaxAu=4*1024*1024, FrameBytes=64, MaxPayload=MaxAu+FrameBytes;
+constexpr uint32_t FeatureVideo=1,FeatureTouch=2;
+constexpr uint64_t TouchDescriptor=1ULL|(2ULL<<8)|(1ULL<<16)|(1ULL<<17)|(1ULL<<18)|(1ULL<<19);
 enum class Type:uint16_t {Hello=1,Capabilities=2,Frame=3,Touch=4,Control=5,Telemetry=6,Heartbeat=7,CameraControl=8};
 enum class Role:uint32_t {Host=1,Device=2};
 struct Violation:std::runtime_error{using std::runtime_error::runtime_error;};
@@ -91,21 +93,25 @@ public:
  void End(){Require(!poisoned,"parser poisoned");if(headUsed){poisoned=true;throw Violation("truncated message");}}
 };
 inline std::vector<uint8_t> Wire(const Message& m){Require(m.payload.size()==m.header.payload,"serialize size");auto h=SerializeHeader(m.header);ParseHeader(h.data());std::vector<uint8_t> out(h.begin(),h.end());out.insert(out.end(),m.payload.begin(),m.payload.end());return out;}
-struct Caps {uint32_t codecs=1,maxAu=MaxAu,width=4096,height=2160,features=1,clock=1;};
-inline std::vector<uint8_t> Hello(Role role,uint16_t minimum=0,uint16_t maximum=0){std::vector<uint8_t> b(24);Put32(b.data(),uint32_t(role));Put16(b.data()+4,minimum);Put16(b.data()+6,maximum);Put32(b.data()+8,1);Put64(b.data()+16,1);return b;}
-inline std::vector<uint8_t> Capabilities(Caps c={}){std::vector<uint8_t>b(32);Put32(b.data(),c.codecs);Put32(b.data()+4,c.maxAu);Put32(b.data()+8,c.width);Put32(b.data()+12,c.height);Put32(b.data()+16,c.features);Put32(b.data()+20,c.clock);return b;}
+struct Caps {uint32_t codecs=1,maxAu=MaxAu,width=4096,height=2160,features=FeatureVideo,clock=1;uint64_t extension=0;};
+inline std::vector<uint8_t> Hello(Role role,uint16_t minimum=0,uint16_t maximum=0,uint32_t clock=1){std::vector<uint8_t> b(24);Put32(b.data(),uint32_t(role));Put16(b.data()+4,minimum);Put16(b.data()+6,maximum);Put32(b.data()+8,clock);Put64(b.data()+16,1);return b;}
+inline std::vector<uint8_t> Capabilities(Caps c={}){std::vector<uint8_t>b(32);Put32(b.data(),c.codecs);Put32(b.data()+4,c.maxAu);Put32(b.data()+8,c.width);Put32(b.data()+12,c.height);Put32(b.data()+16,c.features);Put32(b.data()+20,c.clock);Put64(b.data()+24,c.extension);return b;}
 enum class State {Hello,Capabilities,Ready,Closed};
 class Connection {
- Role role;State state=State::Hello;uint64_t session=0,rx=0,tx=0,lastTimestamp=0,lastFrame=0,lastSource=0,lastPts=0;bool helloSent=false,capsSent=false,hasFrame=false;
+ Role role;State state=State::Hello;uint64_t session=0,rx=0,tx=0,lastTimestamp=0,lastFrame=0,lastSource=0,lastPts=0;uint32_t peerClock=0;uint16_t maximumMinor=0,negotiatedMinor=0;Caps local{};bool helloSent=false,capsSent=false,hasFrame=false;
 public:
  Caps peer;uint64_t frames=0,frameBytes=0,messages=0,wireBytes=0;uint64_t lastFrameSequence=0;uint64_t sequenceGaps=0,duplicates=0,outOfOrder=0;
- explicit Connection(Role r,uint64_t id=0):role(r),session(id){}
+ explicit Connection(Role r,uint64_t id=0,uint16_t maximum=0,Caps capabilities={}):role(r),session(id),maximumMinor(maximum),local(capabilities){Require(maximum<=TouchProfileMinor,"local minor");Require((local.features&FeatureVideo)&&!(local.features&~(FeatureVideo|FeatureTouch)),"local features");Require((local.features&FeatureTouch)?maximum>=TouchProfileMinor&&local.extension==TouchDescriptor:local.extension==0,"local extension");}
  State GetState()const{return state;}uint64_t Session()const{return session;}
+ uint16_t NegotiatedMinor()const{return negotiatedMinor;}
+ bool TouchNegotiated()const{return negotiatedMinor>=TouchProfileMinor&&(local.features&FeatureTouch)&&(peer.features&FeatureTouch)&&local.extension==TouchDescriptor&&peer.extension==TouchDescriptor;}
+ std::vector<uint8_t> LocalHello()const{return Hello(role,0,maximumMinor,local.clock);}
+ std::vector<uint8_t> LocalCapabilities()const{auto c=local;if(negotiatedMinor<TouchProfileMinor){c.features=FeatureVideo;c.extension=0;}return Capabilities(c);}
  Message Make(Type type,std::vector<uint8_t> payload,uint64_t now){
   Require(state!=State::Closed && tx!=UINT64_MAX,"closed/sequence overflow");
   if(type==Type::Hello){Require(!helloSent&&tx==0,"HELLO send order");helloSent=true;}
   else if(type==Type::Capabilities){Require(helloSent&&!capsSent&&state==State::Capabilities,"CAPABILITIES send order");capsSent=true;}
-  else Require(state==State::Ready,"send before ready");
+  else {Require(state==State::Ready,"send before ready");if(type==Type::Touch)Require(TouchNegotiated(),"unnegotiated TOUCH send");}
   Message m{{type,uint32_t(payload.size()),session,++tx,now},std::move(payload)};return m;
  }
  void Receive(const Message& m){
@@ -116,11 +122,12 @@ public:
    if(!session){Require(role==Role::Device&&state==State::Hello,"missing session");session=h.session;}
    Require(h.session==session,"session mismatch");Require(h.timestamp>=lastTimestamp,"timestamp regression");
    auto p=m.payload.data();
-   if(state==State::Hello){Require(h.type==Type::Hello,"HELLO required");Require(U32(p)==uint32_t(role==Role::Host?Role::Device:Role::Host),"peer role");Require(U16(p+4)<=Minor&&U16(p+4)<=U16(p+6),"minor negotiation");Require(U32(p+8)==1&&!U32(p+12)&&U64(p+16)==1,"HELLO clock/features");state=State::Capabilities;}
-   else if(state==State::Capabilities){Require(h.type==Type::Capabilities&&helloSent&&capsSent,"CAPABILITIES required");peer={U32(p),U32(p+4),U32(p+8),U32(p+12),U32(p+16),U32(p+20)};Require((peer.codecs&1)&&!(peer.codecs&~1u)&&peer.maxAu>0&&peer.maxAu<=MaxAu&&peer.width>0&&peer.width<=4096&&peer.height>0&&peer.height<=2160&&peer.features==1&&peer.clock==1&&!U64(p+24),"capability mismatch");state=State::Ready;}
+   if(state==State::Hello){Require(h.type==Type::Hello,"HELLO required");Require(U32(p)==uint32_t(role==Role::Host?Role::Device:Role::Host),"peer role");auto peerMin=U16(p+4),peerMax=U16(p+6);Require(peerMin<=peerMax&&peerMin<=maximumMinor,"minor negotiation");negotiatedMinor=(std::min)(maximumMinor,peerMax);Require(negotiatedMinor>=peerMin,"minor overlap");Require(U32(p+8)<=1&&!U32(p+12)&&U64(p+16)==1,"HELLO clock/features");peerClock=U32(p+8);state=State::Capabilities;}
+   else if(state==State::Capabilities){Require(h.type==Type::Capabilities&&helloSent&&capsSent,"CAPABILITIES required");peer={U32(p),U32(p+4),U32(p+8),U32(p+12),U32(p+16),U32(p+20),U64(p+24)};Require((peer.codecs&1)&&!(peer.codecs&~1u)&&peer.maxAu>0&&peer.maxAu<=MaxAu&&peer.width>0&&peer.width<=4096&&peer.height>0&&peer.height<=2160&&peer.clock==peerClock,"capability mismatch");if(negotiatedMinor<TouchProfileMinor)Require(peer.features==FeatureVideo&&!peer.extension,"legacy capability profile");else Require((peer.features&FeatureVideo)&&!(peer.features&~(FeatureVideo|FeatureTouch))&&((peer.features&FeatureTouch)?peer.extension==TouchDescriptor:peer.extension==0),"extension capability profile");state=State::Ready;}
    else if(h.type==Type::Frame){Require(role==Role::Device,"unexpected inbound FRAME");auto f=ParseFrameInfo(p,h.payload);Require(f.width<=peer.width&&f.height<=peer.height&&f.bytes<=peer.maxAu,"negotiated frame limits");Require((f.flags&7)==NalFlags(p+FrameBytes,f.bytes),"NAL/metadata association");Require(Crc32(p+FrameBytes,f.bytes)==f.crc,"AU CRC");Require(hasFrame||(f.flags&7)==7,"session needs SPS/PPS/IDR");Require(f.id>lastFrame&&f.sourceNs>lastSource&&(!hasFrame||f.pts>lastPts),"frame/source/PTS ordering");lastFrame=f.id;lastSource=f.sourceNs;lastPts=f.pts;hasFrame=true;++frames;frameBytes+=f.bytes;lastFrameSequence=h.sequence;}
    else if(h.type==Type::Heartbeat){/* bounded opaque echo token */}
    else if(h.type==Type::Telemetry){Require(role==Role::Host,"unexpected telemetry");}
+   else if(h.type==Type::Touch){Require(TouchNegotiated(),"unnegotiated TOUCH");}
    else if(h.type==Type::Control){Require(U32(p)==1||U32(p)==2,"control operation");Require(!U32(p+4),"control reserved");}
    else throw Violation("unnegotiated message");
    rx=h.sequence;lastTimestamp=h.timestamp;++messages;wireBytes+=HeaderBytes+h.payload;

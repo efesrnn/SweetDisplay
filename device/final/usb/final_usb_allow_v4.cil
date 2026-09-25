@@ -1,0 +1,10 @@
+; FINAL-USB Candidate 4 enforcing-policy delta.
+; Candidate 3 proved that Android SELinux ioctl extended permissions, not the
+; ordinary tcp_socket ioctl permission, block SIOCSIFADDR.  Keep the Candidate
+; 3 TCP-server permissions and add only the two mutating interface ioctl command
+; numbers used before the already-stock-allowed GET/SET flags commands.
+
+(allow recovery self (tcp_socket (ioctl read write create getattr bind listen accept setopt shutdown)))
+(allow recovery node (tcp_socket (node_bind)))
+(allow recovery port (tcp_socket (name_bind)))
+(allowx recovery self (ioctl tcp_socket ((0x8916 0x891c))))

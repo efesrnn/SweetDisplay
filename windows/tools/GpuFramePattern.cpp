@@ -12,17 +12,22 @@
 #include <algorithm>
 #include <stdexcept>
 #include <memory>
+#include <share.h>
+#include <cerrno>
 #include "PatternObservation.h"
 using Microsoft::WRL::ComPtr;
 static void Check(ULONG code,const char* action) {if(code){char text[256];sprintf_s(text,"%s: code=%lu (0x%08lX)",action,code,code);throw std::runtime_error(text);}}
 static void Hr(HRESULT hr,const char* action){if(hr!=S_OK)Check(ULONG(hr),action);}
 static FILE* Open(const std::wstring& path,const wchar_t* mode){FILE* f=nullptr;const auto e=_wfopen_s(&f,path.c_str(),mode);if(e||!f)Check(e?e:ERROR_OPEN_FAILED,"Open output");return f;}
+static FILE* OpenSharedRead(const std::wstring& path){FILE* f=_wfsopen(path.c_str(),L"w",_SH_DENYWR);if(!f)Check(errno?errno:ERROR_OPEN_FAILED,"Open shared output");return f;}
 static uint64_t Qpc(){LARGE_INTEGER q{};QueryPerformanceCounter(&q);return q.QuadPart;}
 static bool closed=false;
 static SweetDisplay::PatternObservation* observation=nullptr;
 static std::string observationError;
+static FILE* touchLog=nullptr;static uint64_t touchRows=0;
 static LRESULT CALLBACK WindowProc(HWND w,UINT m,WPARAM a,LPARAM b){
  if(observation){try{observation->Message(m,a,b);}catch(const std::exception& e){observationError=e.what();}}
+ if(touchLog&&(m==WM_POINTERDOWN||m==WM_POINTERUPDATE||m==WM_POINTERUP)&&touchRows<10000){POINTER_INFO info{};if(GetPointerInfo(GET_POINTERID_WPARAM(a),&info)){POINT local=info.ptPixelLocation;ScreenToClient(w,&local);const char* event=m==WM_POINTERDOWN?"DOWN":m==WM_POINTERUP?"UP":"MOVE";const char* target="none";if(local.x<280&&local.y>100&&local.y<360)target="top-left";else if(local.x>2120&&local.y>100&&local.y<360)target="top-right";else if(local.x<280&&local.y>740)target="bottom-left";else if(local.x>2120&&local.y>740)target="bottom-right";else if(local.x>1060&&local.x<1340&&local.y>400&&local.y<680)target="center";fprintf(touchLog,"%llu,%s,%u,%ld,%ld,%ld,%ld,%s\n",++touchRows,event,GET_POINTERID_WPARAM(a),info.ptPixelLocation.x,info.ptPixelLocation.y,local.x,local.y,target);fflush(touchLog);}}
  if(m==WM_DESTROY){closed=true;PostQuitMessage(0);return 0;}
  if(m==WM_KEYDOWN&&a==VK_ESCAPE){DestroyWindow(w);return 0;}
  if(m==WM_PAINT){ValidateRect(w,nullptr);return 0;}
@@ -84,9 +89,9 @@ static void Inventory(const std::wstring& file) {
 }
 int wmain(int argc,wchar_t** argv) {
     try {
-        if(argc<4||argc>7)throw std::runtime_error("usage: SweetDisplayGpuPattern existing-evidence-directory nonce-hex seconds [render-fps] [sync-interval] [observe|cover|snapshot|minimize|foreground]");
+        if(argc<4||argc>7)throw std::runtime_error("usage: SweetDisplayGpuPattern existing-evidence-directory nonce-hex seconds [render-fps] [sync-interval] [observe|cover|snapshot|minimize|foreground|touch]");
         const std::wstring dir=argv[1];const uint32_t nonce=wcstoul(argv[2],nullptr,16),seconds=wcstoul(argv[3],nullptr,10);
-        const uint32_t renderFps=argc>4?wcstoul(argv[4],nullptr,10):60,syncInterval=argc>5?wcstoul(argv[5],nullptr,10):1;
+        const uint32_t renderFps=argc>4?wcstoul(argv[4],nullptr,10):60,syncInterval=argc>5?wcstoul(argv[5],nullptr,10):1;const bool touchMode=argc>6&&!wcscmp(argv[6],L"touch");
         if(renderFps>240||syncInterval>1)throw std::runtime_error("Invalid pacing configuration");
         if(!seconds||seconds>86400)throw std::runtime_error("Duration must be 1..86400 seconds");
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -97,7 +102,8 @@ int wmain(int argc,wchar_t** argv) {
             target.mode.dmPosition.x,target.mode.dmPosition.y,2400,1080,nullptr,nullptr,wc.hInstance,nullptr);
         if(!window)Check(GetLastError(),"CreateWindow");
         SweetDisplay::PatternObservation observations;observation=&observations;
-        observations.Start(window,dir,nonce,argc>6?argv[6]:L"");
+        observations.Start(window,dir,nonce,touchMode?L"observe":argc>6?argv[6]:L"");
+        std::unique_ptr<FILE,decltype(&fclose)> touchFile(nullptr,fclose);if(touchMode){touchFile.reset(OpenSharedRead(dir+L"/touch-target-events.csv"));touchLog=touchFile.get();fprintf(touchLog,"row,event,pointer_id,desktop_x,desktop_y,local_x,local_y,target\n");fflush(touchLog);}
         ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;ComPtr<ID3D11DeviceContext1> context1;
         Hr(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,D3D11_CREATE_DEVICE_BGRA_SUPPORT,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context),"D3D11CreateDevice");
         Hr(context.As(&context1),"D3D11 context1");D3D11_FEATURE_DATA_D3D11_OPTIONS options{};
@@ -162,6 +168,7 @@ int wmain(int argc,wchar_t** argv) {
                 if(nonce&(1u<<bit))on.push_back(cells[bit]);if(counter&(1u<<bit))on.push_back(cells[bit+32]);}
             context1->ClearView(view,black,cells,64);if(!on.empty())context1->ClearView(view,white,on.data(),UINT(on.size()));
             const LONG x=LONG((uint64_t(counter)*13)%2100);D3D11_RECT moving{x,500,x+260,760};context1->ClearView(view,marker,&moving,1);
+            if(touchMode){const D3D11_RECT targets[5]={{40,140,240,340},{2160,140,2360,340},{40,760,240,1040},{2160,760,2360,1040},{1110,450,1290,630}};const float colors[5][4]={{1,0.15f,0.15f,1},{0.15f,1,0.15f,1},{0.15f,0.35f,1,1},{1,0.75f,0.1f,1},{1,1,1,1}};for(unsigned i=0;i<5;++i)context1->ClearView(view,colors[i],&targets[i],1);}
             Hr(swap->Present(syncInterval,0),"Present");const uint64_t done=Qpc();
             if(!first)first=renderQpc;last=renderQpc;
             fprintf(log.get(),"%u,%llu,%llu\n",counter,renderQpc,done);
@@ -169,7 +176,7 @@ int wmain(int argc,wchar_t** argv) {
         }
         File report(Open(dir+L"/pattern-result.json",L"w"),fclose);
         fprintf(report.get(),"{\"presented\":%u,\"frequency\":%llu,\"first_qpc\":%llu,\"last_qpc\":%llu,\"render_fps\":%.6f,\"render_limit\":%u,\"width\":2400,\"height\":1080,\"sync_interval\":%u,\"maximum_latency\":1}\n",counter,frequency,first,last,first==last?0:double(counter-1)*frequency/(last-first),renderFps,syncInterval);
-        if(!closed)DestroyWindow(window);observation=nullptr;return 0;
+        if(!closed)DestroyWindow(window);observation=nullptr;touchLog=nullptr;return 0;
     }catch(const std::exception& e){fprintf(stderr,"GPU pattern ERROR: %s\n",e.what());return 1;}
 }
 

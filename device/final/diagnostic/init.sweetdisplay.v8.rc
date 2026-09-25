@@ -1,0 +1,56 @@
+# FINAL-BOOT BRINGUP V8 host-side source. Not installed on stock.
+# V8 retains V7's exact stock volatile backlight action and fixes only the
+# diagnostic's zero-count DRM query handling and bounded query observability.
+
+on early-init
+    write /sys/fs/selinux/enforce 1
+    exec_start sweetdisplay-enforce-probe-v8
+
+    copy /system/etc/ld.config.txt /linkerconfig/ld.config.txt
+    chmod 0444 /linkerconfig/ld.config.txt
+    start ueventd
+    start sweetdisplay-coldboot-watchdog-v8
+
+on init
+    export ANDROID_ROOT /system
+    write /sys/class/backlight/panel0-backlight/brightness 200
+    mkdir /tmp 0755 root root
+    mount tmpfs tmpfs /tmp
+    chmod 0755 /tmp
+
+on property:ro.cold_boot_done=true
+    start sweetdisplay-diag-v8
+
+on property:init.svc.sweetdisplay-diag-v8=stopped
+    setprop sys.powerctl reboot
+
+on property:init.svc.sweetdisplay-coldboot-watchdog-v8=stopped
+    setprop sys.powerctl reboot
+
+service ueventd /system/bin/ueventd
+    critical
+    seclabel u:r:ueventd:s0
+
+service sweetdisplay-enforce-probe-v8 /system/bin/recovery --early-probe
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-coldboot-watchdog-v8 /system/bin/recovery --coldboot-watchdog
+    class core
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
+
+service sweetdisplay-diag-v8 /system/bin/recovery
+    class core
+    user root
+    group root graphics input log
+    seclabel u:r:recovery:s0
+    disabled
+    oneshot
